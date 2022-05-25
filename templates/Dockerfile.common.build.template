@@ -8,6 +8,13 @@ FROM gsc-{{Gramine.Image}} AS gramine
 # Combine Gramine image with the original app image
 FROM {{app_image}}
 
+# App Image "user" is stored here because after this line code will be executed as root user.
+# In the signed graminized image, this "user" will be restored.
+ENV app_user={{app_user}}
+
+# This is to install Gramine specific packages for app images with non-root user
+USER root
+
 # Install distro-specific packages to run Gramine (e.g., python3, protobuf, toml, etc.)
 {% block install %}{% endblock %}
 
@@ -18,10 +25,15 @@ COPY --from=gramine /gramine/ /gramine/
 COPY --from=gramine /gramine/meson_build_output /gramine/meson_build_output
 {% endif %}
 
+# Create a directory that will store apploader.sh and entrypoint files.
+# Elevated permissions will be granted to this directory in the signed image,
+# so that the app image user (which can be a non-root user) can run the container.
+RUN mkdir -p /gramine/app_files
+
 # Copy helper scripts and Gramine manifest
 COPY *.py /
-COPY apploader.sh /
-COPY entrypoint.manifest /
+COPY apploader.sh /gramine/app_files/
+COPY entrypoint.manifest /gramine/app_files/
 
 # Generate trusted arguments if required
 {% if not insecure_args %}
@@ -37,10 +49,10 @@ RUN cd / \
 ENV PATH="/gramine/meson_build_output/bin:$PATH"
 
 # Mark apploader.sh executable, finalize manifest, and remove intermediate scripts
-RUN chmod u+x /apploader.sh \
+RUN chmod u+x /gramine/app_files/apploader.sh \
     && /usr/bin/python3 -B /finalize_manifest.py \
     && rm -f /finalize_manifest.py
 
 # Define default command
-ENTRYPOINT ["/bin/bash", "/apploader.sh"]
+ENTRYPOINT ["/bin/bash", "/gramine/app_files/apploader.sh"]
 CMD [{% if insecure_args %} "{{'", "'.join(cmd)}}" {% endif %}]
